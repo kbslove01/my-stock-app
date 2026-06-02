@@ -9,15 +9,15 @@ st.title("📊 국내주식 조건 검색 & 이동평균선 차트 대시보드"
 
 @st.cache_data(ttl=3600)
 def get_and_filter_stocks(max_price, max_pbr, max_per, min_div):
-    # 한국 시간(UTC+9) 기준으로 날짜 강제 고정
     import datetime as dt
     kst = dt.timezone(dt.timedelta(hours=9))
     
-    # 안전하게 최근 데이터가 나올 때까지 반복 검색하는 로직 추가
+    # 1. 안전하게 주가 데이터가 있는 최근 영업일 찾기
     check_date = dt.datetime.now(kst)
     df_price = pd.DataFrame()
+    today = check_date.strftime("%Y%m%d")
     
-    for _ in range(7): # 최대 일주일 전까지 역추적
+    for _ in range(7):
         today = check_date.strftime("%Y%m%d")
         try:
             df_price = stock.get_market_price_change_by_ticker(today, today)
@@ -27,25 +27,41 @@ def get_and_filter_stocks(max_price, max_pbr, max_per, min_div):
             pass
         check_date -= dt.timedelta(days=1)
         
+    if df_price.empty:
+        st.error("최근 주가 데이터를 한국거래소에서 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.")
+        return pd.DataFrame()
+        
+    # 2. 찾아낸 날짜(today) 기준으로 펀더멘탈 데이터 수집
     try:
         df_fundamental = stock.get_market_fundamental_by_ticker(today, market="ALL")
-        df_price = stock.get_market_price_change_by_ticker(today, today)
-        df_fundamental = stock.get_market_fundamental_by_ticker(today, market="ALL")
         
+        # ⚠️ 만약 거래소 정산 시간대라 펀더멘탈 컬럼이 비어있다면, 안전하게 하루 더 전의 데이터를 가져옴
+        if df_fundamental.empty or 'PBR' not in df_fundamental.columns:
+            prev_date = (check_date - dt.timedelta(days=1)).strftime("%Y%m%d")
+            df_fundamental = stock.get_market_fundamental_by_ticker(prev_date, market="ALL")
+            
+        # 데이터 최종 결합 전 확인
+        if df_fundamental.empty or 'PBR' not in df_fundamental.columns:
+            st.warning(f"현재 한국거래소(KRX)의 재무 지표 업데이트 시간대입니다. 잠시 후 조회하시면 정상 작동합니다.")
+            return pd.DataFrame()
+            
+        # 두 데이터 병합
         df = pd.merge(df_price, df_fundamental, left_index=True, right_index=True)
         df['종목명'] = df.index.map(lambda x: stock.get_market_ticker_name(x))
         df = df[df['PBR'] > 0]
         
+        # 조건 필터링
         condition = True
         if max_price > 0: condition &= (df['종가'] <= max_price)
-        if max_pbr > 0: condition &= (df['PBR'] <= max_pbr)
-        if max_per > 0: condition &= (df['PER'] <= max_per)
-        if min_div > 0: condition &= (df['DIV'] >= min_div)
+        if max_pbr > 0:   condition &= (df['PBR'] <= max_pbr)
+        if max_per > 0:   condition &= (df['PER'] <= max_per)
+        if min_div > 0:   condition &= (df['DIV'] >= min_div)
         
         result = df[condition][['종목명', '종가', 'PBR', 'PER', 'DIV', '거래량']]
         return result.sort_values(by='PBR', ascending=True)
+        
     except Exception as e:
-        st.error(f"데이터 조회 중 오류 발생(장 시작 전이거나 휴일일 수 있습니다): {e}")
+        st.error(f"데이터 정산 및 병합 중 오류 발생: {e}")
         return pd.DataFrame()
 
 def draw_analysis_chart(ticker_code, ticker_name):
