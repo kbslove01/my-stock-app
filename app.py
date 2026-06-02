@@ -9,8 +9,26 @@ st.title("📊 국내주식 조건 검색 & 이동평균선 차트 대시보드"
 
 @st.cache_data(ttl=3600)
 def get_and_filter_stocks(max_price, max_pbr, max_per, min_div):
-    today = datetime.today().strftime("%Y%m%d")
+    # 한국 시간(UTC+9) 기준으로 날짜 강제 고정
+    import datetime as dt
+    kst = dt.timezone(dt.timedelta(hours=9))
+    
+    # 안전하게 최근 데이터가 나올 때까지 반복 검색하는 로직 추가
+    check_date = dt.datetime.now(kst)
+    df_price = pd.DataFrame()
+    
+    for _ in range(7): # 최대 일주일 전까지 역추적
+        today = check_date.strftime("%Y%m%d")
+        try:
+            df_price = stock.get_market_price_change_by_ticker(today, today)
+            if not df_price.empty:
+                break
+        except:
+            pass
+        check_date -= dt.timedelta(days=1)
+        
     try:
+        df_fundamental = stock.get_market_fundamental_by_ticker(today, market="ALL")
         df_price = stock.get_market_price_change_by_ticker(today, today)
         df_fundamental = stock.get_market_fundamental_by_ticker(today, market="ALL")
         
