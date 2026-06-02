@@ -1,0 +1,4 @@
+pykrx
+streamlit
+pandas
+plotly
